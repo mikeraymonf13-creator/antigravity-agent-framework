@@ -1,22 +1,78 @@
-# BorderP45
-BorderP45 TypeScript backend with CaptchaLa validation and TON Connect integration// routes/ton-connect.ts
+
 import express from 'express';
-import 87076c0520451871e68897a9686d046e0c0e06c293855eed49c85ba2298be747{ validateCaptchaToken } from # '../captcha-validation';
+import rateLimit from 'express-rate-limit';
+import { validateCaptchaToken } from '../captcha-validation.js';
 
 const router = express.Router();
 
-router.post('/ton-connect', async (req, res) => {b5ee9c7201010101002b00005180000000bfffff88dbee45749b21874235df6913b4f94ed9d49ab840e6421355efe842710543e8f420
-  const { pass_token } = req.body;
-
-  // Validate CAPTCHA
-  const captchaResult = await validateCaptchaToken(pass_token);
-  if (!captchaResult.success) {
-    return res.status(403).json({ error: 'CAPTCHA validation failed' });
-  }
-
-  // Proceed to TON Connect logic
-  // ...
-  res.json({ message: 'Proceeding to TON Connect' });
+// Limit repeated CAPTCHA attempts.
+const tonConnectLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests. Please try again later.',
+  },
 });
+
+// CAPTCHA verification middleware.
+async function requireCaptcha(req, res, next) {
+  try {
+    const passToken = req.body?.pass_token;
+
+    if (
+      typeof passToken !== 'string' ||
+      passToken.trim().length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'CAPTCHA token is required.',
+      });
+    }
+
+    const captchaResult = await validateCaptchaToken(passToken);
+
+    if (!captchaResult?.success) {
+      return res.status(403).json({
+        success: false,
+        error: 'CAPTCHA verification failed.',
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error('CAPTCHA verification error:', error.message);
+
+    return res.status(503).json({
+      success: false,
+      error: 'CAPTCHA verification is temporarily unavailable.',
+    });
+  }
+}
+
+// TON Connect preflight endpoint.
+router.post(
+  '/ton-connect/preflight',
+  tonConnectLimiter,
+  requireCaptcha,
+  async (req, res) => {
+    try {
+      return res.status(200).json({
+        success: true,
+        captchaVerified: true,
+        network: 'testnet',
+        message: 'CAPTCHA verified. Continue with TON Connect on the client.',
+      });
+    } catch (error) {
+      console.error('TON Connect preflight error:', error.message);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Unable to prepare TON Connect.',
+      });
+    }
+  }
+);
 
 export default router;
